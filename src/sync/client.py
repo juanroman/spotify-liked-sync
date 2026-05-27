@@ -100,13 +100,13 @@ class SpotifyClient:
     def get_playlist_tracks(self, playlist_id: str) -> list[str]:
         uris: list[str] = []
         url = f"/playlists/{playlist_id}/items"
-        params: dict[str, int | str] = {"limit": 100, "fields": "next,items(track(uri))"}
+        params: dict[str, int | str] = {"limit": 100, "fields": "next,items(item(uri))"}
 
         while True:
             resp = self._request("GET", url, params=params)
             data = resp.json()
             for item in data.get("items", []):
-                track = item.get("track")
+                track = item.get("item")
                 if track and track.get("uri"):
                     uris.append(track["uri"])
             next_url: str | None = data.get("next")
