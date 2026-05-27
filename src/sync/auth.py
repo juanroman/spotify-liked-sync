@@ -16,8 +16,8 @@ from sync.config import Config
 
 SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
-REDIRECT_URI = "http://localhost:8888/callback"
-SCOPES = "user-library-read playlist-modify-public playlist-modify-private"
+REDIRECT_URI = "http://127.0.0.1:8888/callback"
+SCOPES = "user-library-read playlist-read-private playlist-modify-public playlist-modify-private"
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -64,7 +64,7 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
 
 
 def _wait_for_callback() -> tuple[str, str]:
-    server = http.server.HTTPServer(("localhost", 8888), _CallbackHandler)
+    server = http.server.HTTPServer(("127.0.0.1", 8888), _CallbackHandler)
     server.handle_request()
     if _CallbackHandler.error:
         raise RuntimeError(f"Spotify auth error: {_CallbackHandler.error}")
@@ -79,7 +79,11 @@ def run_auth_flow(config: Config) -> None:
     auth_url = _build_auth_url(config.spotify.client_id, challenge, state)
 
     print(f"Opening browser for Spotify authorization...\n{auth_url}")
-    webbrowser.open(auth_url)
+    # Use Chrome on macOS to avoid Safari's HTTPS-Only mode blocking the localhost callback
+    try:
+        webbrowser.get("chrome").open(auth_url)
+    except webbrowser.Error:
+        webbrowser.open(auth_url)
 
     code, returned_state = _wait_for_callback()
 

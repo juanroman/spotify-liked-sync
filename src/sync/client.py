@@ -123,8 +123,6 @@ class SpotifyClient:
         return str(resp.json()["id"])
 
     def find_or_create_playlist(self, name: str) -> str:
-        user_id = self.get_current_user_id()
-
         url = "/me/playlists"
         params: dict[str, int] = {"limit": 50}
         while True:
@@ -144,7 +142,7 @@ class SpotifyClient:
         description = "Auto-synced from Spotify Liked Songs"
         resp = self._request(
             "POST",
-            f"/users/{user_id}/playlists",
+            "/me/playlists",
             json={"name": name, "public": False, "description": description},
         )
         playlist_id = resp.json()["id"]
@@ -180,18 +178,18 @@ class SpotifyClient:
 
     def _write_playlist(self, playlist_id: str, uris: list[str]) -> None:
         if not uris:
-            self._request("PUT", f"/playlists/{playlist_id}/tracks", json={"uris": []})
+            self._request("PUT", f"/playlists/{playlist_id}/items", json={"uris": []})
             return
 
         self._request(
             "PUT",
-            f"/playlists/{playlist_id}/tracks",
+            f"/playlists/{playlist_id}/items",
             json={"uris": uris[:100]},
         )
 
         for i in range(100, len(uris), 100):
             self._request(
                 "POST",
-                f"/playlists/{playlist_id}/tracks",
+                f"/playlists/{playlist_id}/items",
                 json={"uris": uris[i : i + 100]},
             )
