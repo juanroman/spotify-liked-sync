@@ -1,0 +1,15 @@
+[spotify]
+client_id     = ""              # or SPOTIFY_CLIENT_ID env var
+client_secret = ""              # or SPOTIFY_CLIENT_SECRET env var
+target_playlist_name = "Liked Playlist"
+target_playlist_id   = ""       # optional; auto-populated after first run
+
+[notifications]
+errors    = true
+warnings  = true
+adds      = true
+consecutive_failures_threshold = 3
+
+[logging]
+level = "INFO"
+file  = "~/.local/share/spotify-sync/sync.log"
