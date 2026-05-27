@@ -43,6 +43,36 @@ class Config:
         return self.log_file.parent
 
 
+def persist_playlist_id(playlist_id: str, config_path: Path | None = None) -> None:
+    import re
+
+    path = config_path or Path("config.toml")
+    if not path.exists():
+        path.write_text(f'[spotify]\ntarget_playlist_id = "{playlist_id}"\n')
+        return
+
+    text = path.read_text()
+
+    if re.search(r"^target_playlist_id\s*=", text, re.MULTILINE):
+        text = re.sub(
+            r'^(target_playlist_id\s*=\s*).*$',
+            f'target_playlist_id = "{playlist_id}"',
+            text,
+            flags=re.MULTILINE,
+        )
+    elif "[spotify]" in text:
+        text = re.sub(
+            r"(\[spotify\])",
+            f'\\1\ntarget_playlist_id = "{playlist_id}"',
+            text,
+            count=1,
+        )
+    else:
+        text += f'\n[spotify]\ntarget_playlist_id = "{playlist_id}"\n'
+
+    path.write_text(text)
+
+
 def load_config(config_path: Path | None = None) -> Config:
     path = config_path or Path("config.toml")
 

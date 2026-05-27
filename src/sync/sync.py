@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sync.client import RateLimitError, SpotifyAPIError, SpotifyClient
-from sync.config import Config
+from sync.config import Config, persist_playlist_id
 
 log = logging.getLogger(__name__)
 
@@ -28,9 +28,12 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
     state = _load_state(state_path)
 
     try:
-        playlist_id = config.spotify.target_playlist_id or client.find_or_create_playlist(
-            config.spotify.target_playlist_name
-        )
+        if config.spotify.target_playlist_id:
+            playlist_id = config.spotify.target_playlist_id
+        else:
+            playlist_id = client.find_or_create_playlist(config.spotify.target_playlist_name)
+            persist_playlist_id(playlist_id)
+            log.info("Persisted target_playlist_id=%s to config.toml", playlist_id)
 
         liked_uris = client.get_liked_songs()
         current_uris = client.get_playlist_tracks(playlist_id)
