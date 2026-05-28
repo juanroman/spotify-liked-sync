@@ -11,7 +11,9 @@ def _write_toml(path: Path, content: str) -> None:
     path.write_text(content)
 
 
-def test_load_from_toml(tmp_path: Path) -> None:
+def test_load_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
     cfg_path = tmp_path / "config.toml"
     _write_toml(
         cfg_path,
