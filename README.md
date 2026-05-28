@@ -86,6 +86,15 @@ file  = "~/.local/share/spotify-sync/sync.log"
 uv run pytest
 ```
 
+## Code quality
+
+```bash
+uv run ruff check .       # linting
+uv run black --check .    # formatting
+uv run mypy src           # type checking
+uv run pip-audit          # dependency vulnerability scan
+```
+
 ## License
 
 MIT
