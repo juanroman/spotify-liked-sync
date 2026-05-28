@@ -117,12 +117,12 @@ def test_replace_playlist_success(config: Config, httpx_mock: HTTPXMock, tmp_pat
 
     httpx_mock.add_response(
         method="GET",
-        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28track%28uri%29%29",
-        json={"items": [{"track": {"uri": "spotify:track:OLD"}}], "next": None},
+        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28item%28uri%29%29",
+        json={"items": [{"item": {"uri": "spotify:track:OLD"}}], "next": None},
     )
     httpx_mock.add_response(
         method="PUT",
-        url=f"{API}/playlists/{playlist_id}/tracks",
+        url=f"{API}/playlists/{playlist_id}/items",
         json={"snapshot_id": "snap1"},
     )
 
@@ -140,20 +140,20 @@ def test_replace_playlist_wal_written_on_failure(
 
     httpx_mock.add_response(
         method="GET",
-        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28track%28uri%29%29",
-        json={"items": [{"track": {"uri": "spotify:track:OLD"}}], "next": None},
+        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28item%28uri%29%29",
+        json={"items": [{"item": {"uri": "spotify:track:OLD"}}], "next": None},
     )
     # PUT fails (3 attempts via tenacity)
     for _ in range(3):
         httpx_mock.add_response(
             method="PUT",
-            url=f"{API}/playlists/{playlist_id}/tracks",
+            url=f"{API}/playlists/{playlist_id}/items",
             status_code=500,
         )
     # restore: PUT succeeds
     httpx_mock.add_response(
         method="PUT",
-        url=f"{API}/playlists/{playlist_id}/tracks",
+        url=f"{API}/playlists/{playlist_id}/items",
         json={"snapshot_id": "restored"},
     )
 
@@ -175,11 +175,11 @@ def test_replace_playlist_batches_over_100(
 
     httpx_mock.add_response(
         method="GET",
-        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28track%28uri%29%29",
+        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28item%28uri%29%29",
         json={"items": [], "next": None},
     )
-    httpx_mock.add_response(method="PUT", url=f"{API}/playlists/{playlist_id}/tracks", json={})
-    httpx_mock.add_response(method="POST", url=f"{API}/playlists/{playlist_id}/tracks", json={})
+    httpx_mock.add_response(method="PUT", url=f"{API}/playlists/{playlist_id}/items", json={})
+    httpx_mock.add_response(method="POST", url=f"{API}/playlists/{playlist_id}/items", json={})
 
     with make_client(config) as client:
         client.replace_playlist(playlist_id, uris, wal_path)
@@ -191,11 +191,6 @@ def test_replace_playlist_batches_over_100(
 
 
 def test_find_existing_playlist(config: Config, httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(
-        method="GET",
-        url=f"{API}/me",
-        json={"id": "user1"},
-    )
     httpx_mock.add_response(
         method="GET",
         url=f"{API}/me/playlists?limit=50",
@@ -210,7 +205,6 @@ def test_find_existing_playlist(config: Config, httpx_mock: HTTPXMock) -> None:
 
 
 def test_create_playlist_when_not_found(config: Config, httpx_mock: HTTPXMock) -> None:
-    httpx_mock.add_response(method="GET", url=f"{API}/me", json={"id": "user1"})
     httpx_mock.add_response(
         method="GET",
         url=f"{API}/me/playlists?limit=50",
@@ -218,7 +212,7 @@ def test_create_playlist_when_not_found(config: Config, httpx_mock: HTTPXMock) -
     )
     httpx_mock.add_response(
         method="POST",
-        url=f"{API}/users/user1/playlists",
+        url=f"{API}/me/playlists",
         json={"id": "new_pl_id"},
     )
     with make_client(config) as client:
@@ -232,10 +226,10 @@ def test_replace_playlist_empty_list(config: Config, httpx_mock: HTTPXMock, tmp_
 
     httpx_mock.add_response(
         method="GET",
-        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28track%28uri%29%29",
+        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28item%28uri%29%29",
         json={"items": [], "next": None},
     )
-    httpx_mock.add_response(method="PUT", url=f"{API}/playlists/{playlist_id}/tracks", json={})
+    httpx_mock.add_response(method="PUT", url=f"{API}/playlists/{playlist_id}/items", json={})
 
     with make_client(config) as client:
         client.replace_playlist(playlist_id, [], wal_path)
@@ -246,7 +240,7 @@ def test_replace_playlist_empty_list(config: Config, httpx_mock: HTTPXMock, tmp_
 def test_get_playlist_tracks_empty(config: Config, httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         method="GET",
-        url=f"{API}/playlists/pl1/items?limit=100&fields=next%2Citems%28track%28uri%29%29",
+        url=f"{API}/playlists/pl1/items?limit=100&fields=next%2Citems%28item%28uri%29%29",
         json={"items": [], "next": None},
     )
     with make_client(config) as client:

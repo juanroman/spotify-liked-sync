@@ -55,7 +55,7 @@ def persist_playlist_id(playlist_id: str, config_path: Path | None = None) -> No
 
     if re.search(r"^target_playlist_id\s*=", text, re.MULTILINE):
         text = re.sub(
-            r'^(target_playlist_id\s*=\s*).*$',
+            r"^(target_playlist_id\s*=\s*).*$",
             f'target_playlist_id = "{playlist_id}"',
             text,
             flags=re.MULTILINE,
