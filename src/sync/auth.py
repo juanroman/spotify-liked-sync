@@ -155,7 +155,7 @@ def _refresh_tokens(
     expires_at = datetime.now(tz=UTC) + timedelta(seconds=data["expires_in"])
     return {
         "access_token": data["access_token"],
-        # Spotify doesn't always return a new refresh token (RFC 6749 §6); keep the old one when absent.
+        # Spotify may omit a new refresh token (RFC 6749 §6); keep the existing one when absent.
         "refresh_token": data.get("refresh_token", refresh_token),
         "expires_at": expires_at.isoformat(),
     }

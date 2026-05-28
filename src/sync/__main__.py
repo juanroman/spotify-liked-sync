@@ -22,7 +22,7 @@ def _setup_logging(level: str, log_file: Path) -> None:
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
-    # Both handlers are always active: the file captures output when running unattended (cron/launchd)
+    # Both handlers are always active: file captures output when running unattended (cron/launchd)
     # where stderr is discarded; stderr gives immediate feedback during interactive runs.
     # 5 MB / 3 backups keeps disk use predictable on space-constrained hosts (e.g. Raspberry Pi).
     file_handler = logging.handlers.RotatingFileHandler(

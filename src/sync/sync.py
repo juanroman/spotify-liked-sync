@@ -38,7 +38,7 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         liked_uris = client.get_liked_songs()
         current_uris = client.get_playlist_tracks(playlist_id)
 
-        # List equality, not set: Liked Songs order (most-recent-first) is meaningful and must be preserved.
+        # List equality, not set: Liked Songs order (most-recent-first) is meaningful and preserved.
         if liked_uris == current_uris:
             log.info("Playlist already in sync (%d tracks). Nothing to do.", len(liked_uris))
             _save_state(state_path, consecutive_failures=0)
