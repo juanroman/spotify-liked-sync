@@ -1,6 +1,6 @@
 # spotify-liked-sync
 
-A lightweight Python CLI that syncs your Spotify Liked Songs into a regular playlist. Think SongShift, but self-hosted, scriptable, and free — with full control over scheduling and no third-party account required.
+A Python CLI that mirrors your Spotify Liked Songs into a regular playlist — newest first, removes included. Because Liked Songs can't be synced to Apple Music or other services directly, this creates a proper playlist you can hand off to tools like SongShift.
 
 ## Features
 
