@@ -60,6 +60,7 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(msg)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        # BaseHTTPRequestHandler prints every request to stdout by default; suppress it.
         pass
 
 
@@ -126,6 +127,7 @@ def get_valid_token(config: Config, http_client: httpx.Client | None = None) -> 
 
     tokens = json.loads(tokens_path.read_text())
     expires_at = datetime.fromisoformat(tokens["expires_at"])
+    # Refresh 60s early to avoid a race where the token expires between this check and the API call.
     soon = datetime.now(tz=UTC) + timedelta(seconds=60)
 
     if expires_at <= soon:
@@ -153,6 +155,7 @@ def _refresh_tokens(
     expires_at = datetime.now(tz=UTC) + timedelta(seconds=data["expires_in"])
     return {
         "access_token": data["access_token"],
+        # Spotify doesn't always return a new refresh token (RFC 6749 §6); keep the old one when absent.
         "refresh_token": data.get("refresh_token", refresh_token),
         "expires_at": expires_at.isoformat(),
     }
