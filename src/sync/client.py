@@ -58,6 +58,8 @@ class SpotifyClient:
             resp = self._http.request(method, url, headers=self._headers(), **kwargs)  # type: ignore[arg-type]
 
             if resp.status_code == 401:
+                # Call _get_token() for its side effect: it refreshes and persists a new token so
+                # _headers() picks it up on the retry. The return value is intentionally discarded.
                 self._get_token()
                 resp = self._http.request(method, url, headers=self._headers(), **kwargs)  # type: ignore[arg-type]
 
@@ -106,6 +108,7 @@ class SpotifyClient:
             resp = self._request("GET", url, params=params)
             data = resp.json()
             for item in data.get("items", []):
+                # Playlist items use "item" (not "track") because episodes share the same wrapper.
                 track = item.get("item")
                 if track and track.get("uri"):
                     uris.append(track["uri"])
@@ -181,6 +184,8 @@ class SpotifyClient:
             self._request("PUT", f"/playlists/{playlist_id}/items", json={"uris": []})
             return
 
+        # PUT replaces the playlist but is capped at 100 URIs by the Spotify API.
+        # Additional batches must use POST (append), not PUT (which would reset the list again).
         self._request(
             "PUT",
             f"/playlists/{playlist_id}/items",

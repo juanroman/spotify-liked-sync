@@ -44,6 +44,8 @@ class Config:
 
 
 def persist_playlist_id(playlist_id: str, config_path: Path | None = None) -> None:
+    # tomllib (stdlib) is read-only by design; writing TOML requires an external dep we want to
+    # avoid, so we patch the file with regex instead.
     import re
 
     path = config_path or Path("config.toml")
