@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -10,12 +11,22 @@ from pytest_httpx import HTTPXMock
 
 from sync.auth import (
     _build_auth_url,
+    _CallbackHandler,
     _pkce_pair,
     _refresh_tokens,
     _tokens_path,
+    _wait_for_callback,
     get_valid_token,
+    run_auth_flow,
 )
 from sync.config import Config
+
+
+@pytest.fixture(autouse=True)
+def reset_callback_handler_state() -> None:
+    _CallbackHandler.code = None
+    _CallbackHandler.state = None
+    _CallbackHandler.error = None
 
 
 def test_get_valid_token_fresh(config: Config, tokens_file: Path) -> None:
@@ -105,3 +116,84 @@ def test_build_auth_url_contains_required_params() -> None:
     assert "code_challenge_method=S256" in url
     assert "response_type=code" in url
     assert url.startswith("https://accounts.spotify.com/authorize")
+
+
+def _make_handler(path: str) -> _CallbackHandler:
+    handler = _CallbackHandler.__new__(_CallbackHandler)
+    handler.path = path
+    handler.send_response = MagicMock()  # type: ignore[method-assign]
+    handler.end_headers = MagicMock()  # type: ignore[method-assign]
+    handler.wfile = MagicMock()
+    return handler
+
+
+def test_callback_handler_parses_code_and_state() -> None:
+    handler = _make_handler("/callback?code=auth_code_123&state=secure_state")
+    handler.do_GET()
+    assert _CallbackHandler.code == "auth_code_123"
+    assert _CallbackHandler.state == "secure_state"
+    assert _CallbackHandler.error is None
+
+
+def test_callback_handler_captures_error() -> None:
+    handler = _make_handler("/callback?error=access_denied&state=secure_state")
+    handler.do_GET()
+    assert _CallbackHandler.error == "access_denied"
+    assert _CallbackHandler.code is None
+
+
+def test_wait_for_callback_raises_on_auth_error() -> None:
+    with patch("sync.auth.http.server.HTTPServer") as mock_server_cls:
+        mock_server = MagicMock()
+        mock_server_cls.return_value = mock_server
+
+        def set_error(*_: object) -> None:
+            _CallbackHandler.error = "access_denied"
+
+        mock_server.handle_request.side_effect = set_error
+
+        with pytest.raises(RuntimeError, match="Spotify auth error: access_denied"):
+            _wait_for_callback()
+
+
+def test_wait_for_callback_raises_on_missing_code() -> None:
+    with patch("sync.auth.http.server.HTTPServer") as mock_server_cls:
+        mock_server = MagicMock()
+        mock_server_cls.return_value = mock_server
+
+        with pytest.raises(RuntimeError, match="No code/state received"):
+            _wait_for_callback()
+
+
+def test_run_auth_flow_raises_on_state_mismatch(config: Config) -> None:
+    with (
+        patch("sync.auth._pkce_pair", return_value=("verifier", "challenge")),
+        patch("sync.auth.secrets.token_urlsafe", return_value="expected_state"),
+        patch("sync.auth.webbrowser.get"),
+        patch("sync.auth._wait_for_callback", return_value=("code_xyz", "wrong_state")),
+        pytest.raises(RuntimeError, match="State mismatch"),
+    ):
+        run_auth_flow(config)
+
+
+def test_run_auth_flow_saves_tokens(
+    config: Config, tokens_file: Path, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://accounts.spotify.com/api/token",
+        json={"access_token": "flow_access", "refresh_token": "flow_refresh", "expires_in": 3600},
+    )
+
+    with (
+        patch("sync.auth._pkce_pair", return_value=("verifier", "challenge")),
+        patch("sync.auth.secrets.token_urlsafe", return_value="good_state"),
+        patch("sync.auth.webbrowser.get"),
+        patch("sync.auth._wait_for_callback", return_value=("auth_code", "good_state")),
+    ):
+        run_auth_flow(config)
+
+    saved = json.loads(tokens_file.read_text())
+    assert saved["access_token"] == "flow_access"
+    assert saved["refresh_token"] == "flow_refresh"
+    assert "expires_at" in saved
