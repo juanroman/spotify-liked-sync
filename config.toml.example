@@ -9,6 +9,8 @@ errors    = true
 warnings  = true
 adds      = true
 consecutive_failures_threshold = 3
+pushover_token = ""   # Your App token from pushover.net/apps
+pushover_user  = ""   # Your User Key from pushover.net
 
 [logging]
 level = "INFO"

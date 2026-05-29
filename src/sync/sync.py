@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sync.client import RateLimitError, SpotifyAPIError, SpotifyClient
 from sync.config import Config, persist_playlist_id
+from sync.notify import push
 
 log = logging.getLogger(__name__)
 
@@ -51,8 +52,13 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
 
         client.replace_playlist(playlist_id, liked_uris, wal_path)
 
-        if config.notifications.adds and added:
-            log.info("+%d track(s) added, -%d track(s) removed", len(added), len(removed))
+        if config.notifications.adds and (added or removed):
+            parts = ([f"+{len(added)} added"] if added else []) + (
+                [f"-{len(removed)} removed"] if removed else []
+            )
+            msg = ", ".join(parts)
+            log.info(msg)
+            push(config.notifications, msg)
         else:
             log.info("Sync complete: %d tracks in playlist", len(liked_uris))
 
@@ -74,6 +80,11 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
                 exc.status_code,
                 exc,
             )
+            if config.notifications.errors:
+                push(
+                    config.notifications,
+                    f"Spotify API error {exc.status_code} — manual intervention needed",
+                )
         else:
             log.error("Spotify API error: %s", exc)
         failures = state.get("consecutive_failures", 0) + 1
@@ -96,6 +107,10 @@ def _check_consecutive_failures(failures: int, config: Config) -> None:
             "%d consecutive sync failures (threshold=%d). Check logs for details.",
             failures,
             threshold,
+        )
+        push(
+            config.notifications,
+            f"{failures} consecutive sync failures (threshold={threshold}). Check logs.",
         )
 
 

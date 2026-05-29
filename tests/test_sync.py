@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -191,3 +191,77 @@ def test_non_auth_api_error_increments_counter(config: Config) -> None:
 
     state = json.loads(state_path.read_text())
     assert state["consecutive_failures"] == 1
+
+
+def test_push_called_on_sync_with_adds(config: Config) -> None:
+    liked = ["spotify:track:A", "spotify:track:B"]
+    current = ["spotify:track:A"]
+    client = _make_mock_client(liked, current)
+
+    with patch("sync.sync.push") as mock_push:
+        run_sync(config, client)
+
+    mock_push.assert_called_once()
+    message = mock_push.call_args[0][1]
+    assert "+1 added" in message
+
+
+def test_push_called_with_removed_count(config: Config) -> None:
+    liked = ["spotify:track:A"]
+    current = ["spotify:track:A", "spotify:track:B"]
+    client = _make_mock_client(liked, current)
+
+    with patch("sync.sync.push") as mock_push:
+        run_sync(config, client)
+
+    mock_push.assert_called_once()
+    message = mock_push.call_args[0][1]
+    assert "-1 removed" in message
+
+
+def test_push_not_called_on_no_changes(config: Config) -> None:
+    uris = ["spotify:track:A"]
+    client = _make_mock_client(uris, uris)
+
+    with patch("sync.sync.push") as mock_push:
+        run_sync(config, client)
+
+    mock_push.assert_not_called()
+
+
+def test_push_called_on_consecutive_failures(config: Config) -> None:
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = SpotifyAPIError(500, "Server Error")
+
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"consecutive_failures": 2}))
+
+    with patch("sync.sync.push") as mock_push, contextlib.suppress(SpotifyAPIError):
+        run_sync(config, client)
+
+    mock_push.assert_called_once()
+    message = mock_push.call_args[0][1]
+    assert "consecutive" in message.lower()
+
+
+def test_push_called_on_fatal_4xx(config: Config) -> None:
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = SpotifyAPIError(403, "Forbidden")
+
+    with patch("sync.sync.push") as mock_push, contextlib.suppress(SpotifyAPIError):
+        run_sync(config, client)
+
+    mock_push.assert_called_once()
+    message = mock_push.call_args[0][1]
+    assert "403" in message
+
+
+def test_push_not_called_on_rate_limit(config: Config) -> None:
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = RateLimitError(30)
+
+    with patch("sync.sync.push") as mock_push:
+        run_sync(config, client)
+
+    mock_push.assert_not_called()
