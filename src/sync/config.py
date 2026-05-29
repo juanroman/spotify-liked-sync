@@ -20,6 +20,8 @@ class NotificationsConfig:
     warnings: bool = True
     adds: bool = True
     consecutive_failures_threshold: int = 3
+    pushover_token: str = ""
+    pushover_user: str = ""
 
 
 @dataclass
@@ -128,6 +130,8 @@ def load_config(config_path: Path | None = None) -> Config:
         warnings=bool(notif_raw.get("warnings", True)),
         adds=bool(notif_raw.get("adds", True)),
         consecutive_failures_threshold=int(str(notif_raw.get("consecutive_failures_threshold", 3))),
+        pushover_token=os.environ.get("PUSHOVER_TOKEN") or str(notif_raw.get("pushover_token", "")),
+        pushover_user=os.environ.get("PUSHOVER_USER") or str(notif_raw.get("pushover_user", "")),
     )
 
     log_raw: dict[str, object] = raw.get("logging", {})  # type: ignore[assignment]
