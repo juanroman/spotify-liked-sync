@@ -132,9 +132,10 @@ def test_replace_playlist_success(config: Config, httpx_mock: HTTPXMock, tmp_pat
     assert not wal_path.exists()
 
 
-def test_replace_playlist_wal_written_on_failure(
+def test_replace_playlist_wal_preserved_when_restore_also_fails(
     config: Config, httpx_mock: HTTPXMock, tmp_path: Path
 ) -> None:
+    # WAL must stay on disk when both write and restore fail — it's the only recovery artifact.
     playlist_id = "pl2"
     wal_path = tmp_path / "wal.json"
 
@@ -143,19 +144,20 @@ def test_replace_playlist_wal_written_on_failure(
         url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28item%28uri%29%29",
         json={"items": [{"item": {"uri": "spotify:track:OLD"}}], "next": None},
     )
-    # PUT fails (3 attempts via tenacity)
+    # write fails (3 tenacity attempts)
     for _ in range(3):
         httpx_mock.add_response(
             method="PUT",
             url=f"{API}/playlists/{playlist_id}/items",
             status_code=500,
         )
-    # restore: PUT succeeds
-    httpx_mock.add_response(
-        method="PUT",
-        url=f"{API}/playlists/{playlist_id}/items",
-        json={"snapshot_id": "restored"},
-    )
+    # restore also fails (3 tenacity attempts)
+    for _ in range(3):
+        httpx_mock.add_response(
+            method="PUT",
+            url=f"{API}/playlists/{playlist_id}/items",
+            status_code=500,
+        )
 
     with make_client(config) as client, pytest.raises(httpx.HTTPStatusError):
         client.replace_playlist(playlist_id, ["spotify:track:NEW"], wal_path)
@@ -237,6 +239,38 @@ def test_replace_playlist_empty_list(config: Config, httpx_mock: HTTPXMock, tmp_
     assert not wal_path.exists()
 
 
+def test_replace_playlist_wal_deleted_after_restore_success(
+    config: Config, httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    playlist_id = "pl_restore"
+    wal_path = tmp_path / "wal.json"
+
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{API}/playlists/{playlist_id}/items?limit=100&fields=next%2Citems%28item%28uri%29%29",
+        json={"items": [{"item": {"uri": "spotify:track:OLD"}}], "next": None},
+    )
+    # PUT fails (3 attempts via tenacity)
+    for _ in range(3):
+        httpx_mock.add_response(
+            method="PUT",
+            url=f"{API}/playlists/{playlist_id}/items",
+            status_code=500,
+        )
+    # restore PUT succeeds
+    httpx_mock.add_response(
+        method="PUT",
+        url=f"{API}/playlists/{playlist_id}/items",
+        json={"snapshot_id": "restored"},
+    )
+
+    with make_client(config) as client, pytest.raises(httpx.HTTPStatusError):
+        client.replace_playlist(playlist_id, ["spotify:track:NEW"], wal_path)
+
+    # Restore succeeded — WAL should be gone so subsequent runs don't see a false alarm
+    assert not wal_path.exists()
+
+
 def test_get_playlist_tracks_empty(config: Config, httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         method="GET",
@@ -246,6 +280,32 @@ def test_get_playlist_tracks_empty(config: Config, httpx_mock: HTTPXMock) -> Non
     with make_client(config) as client:
         uris = client.get_playlist_tracks("pl1")
     assert uris == []
+
+
+def test_pagination_next_url_with_equals_in_param_value(
+    config: Config, httpx_mock: HTTPXMock
+) -> None:
+    # next URL whose query string has a param value containing '=' (e.g. a base64 cursor).
+    # The old split('=') parser raised ValueError; urllib.parse.parse_qs handles it correctly.
+    next_url = f"{API}/me/tracks?limit=50&cursor=abc%3Ddef%3Dextra"
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{API}/me/tracks?limit=50",
+        json={
+            "items": [{"track": {"uri": "spotify:track:A"}}],
+            "next": next_url,
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=next_url,
+        json={"items": [{"track": {"uri": "spotify:track:B"}}], "next": None},
+    )
+
+    with make_client(config) as client:
+        uris = client.get_liked_songs()
+
+    assert uris == ["spotify:track:A", "spotify:track:B"]
 
 
 def test_401_triggers_token_refresh(config: Config, httpx_mock: HTTPXMock) -> None:

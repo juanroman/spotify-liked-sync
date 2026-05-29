@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -69,20 +71,44 @@ def test_wal_warning_on_startup(config: Config, caplog: pytest.LogCaptureFixture
     assert any("WAL" in r.message for r in caplog.records)
 
 
-def test_rate_limit_increments_failure_counter(config: Config) -> None:
+def test_rate_limit_does_not_increment_failure_counter(config: Config) -> None:
+    # Rate-limiting is infrastructure noise, not a script failure; incrementing the counter
+    # would trigger the consecutive-failures warning when the cause is transient, not a bug.
     client = _make_mock_client([], [])
     client.get_liked_songs.side_effect = RateLimitError(60)
 
     state_path = config.state_dir / "state.json"
     config.state_dir.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"consecutive_failures": 2}))
 
     run_sync(config, client)
 
     state = json.loads(state_path.read_text())
-    assert state["consecutive_failures"] == 1
+    assert state["consecutive_failures"] == 2  # unchanged
 
 
-def test_consecutive_failures_warning(config: Config, caplog: pytest.LogCaptureFixture) -> None:
+def test_consecutive_failures_warning_on_api_error(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The consecutive-failures warning fires for genuine API errors, not rate-limits.
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = SpotifyAPIError(500, "Internal Server Error")
+
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"consecutive_failures": 2}))
+
+    import logging
+
+    with caplog.at_level(logging.WARNING), contextlib.suppress(SpotifyAPIError):
+        run_sync(config, client)
+
+    assert any("consecutive" in r.message.lower() for r in caplog.records)
+
+
+def test_rate_limit_does_not_fire_consecutive_failures_warning(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
     client = _make_mock_client([], [])
     client.get_liked_songs.side_effect = RateLimitError(60)
 
@@ -95,7 +121,7 @@ def test_consecutive_failures_warning(config: Config, caplog: pytest.LogCaptureF
     with caplog.at_level(logging.WARNING):
         run_sync(config, client)
 
-    assert any("consecutive" in r.message.lower() for r in caplog.records)
+    assert not any("consecutive" in r.message.lower() for r in caplog.records)
 
 
 def test_success_resets_failure_counter(config: Config) -> None:
@@ -110,6 +136,18 @@ def test_success_resets_failure_counter(config: Config) -> None:
 
     state = json.loads(state_path.read_text())
     assert state["consecutive_failures"] == 0
+
+
+def test_run_sync_passes_config_path_to_persist(config: Config, tmp_path: Path) -> None:
+    """run_sync must forward config.config_path so persist_playlist_id writes the right file."""
+    cfg_path = tmp_path / "custom_config.toml"
+    cfg_path.write_text('[spotify]\nclient_id = "x"\nclient_secret = "y"\n')
+    config.config_path = cfg_path
+
+    client = _make_mock_client(["spotify:track:A"], [])
+    run_sync(config, client)
+
+    assert "target_playlist_id" in cfg_path.read_text()
 
 
 def test_uses_config_playlist_id_when_set(config: Config) -> None:

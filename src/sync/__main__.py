@@ -14,12 +14,16 @@ from sync.sync import run_sync
 def _setup_logging(level: str, log_file: Path) -> None:
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    root = logging.getLogger()
+    # Clear before adding: without this, each call appends handlers and every log record is
+    # emitted N times (once per accumulated handler) when main() is called more than once.
+    root.handlers.clear()
+
     fmt = logging.Formatter(
         "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
-    root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
     # Both handlers are always active: file captures output when running unattended (cron/launchd)
@@ -45,6 +49,12 @@ def main() -> None:
     config_path: Path | None = None
     if "--config" in sys.argv:
         idx = sys.argv.index("--config")
+        if idx + 1 >= len(sys.argv):
+            print(
+                "Usage: python -m sync <auth|run> [--config path/to/config.toml]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         config_path = Path(sys.argv[idx + 1])
 
     config = load_config(config_path)

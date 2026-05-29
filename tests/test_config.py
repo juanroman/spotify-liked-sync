@@ -92,6 +92,47 @@ def test_log_file_expands_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert "some/path/sync.log" in str(cfg.log_file)
 
 
+def test_persist_playlist_id_writes_to_explicit_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg_path = tmp_path / "custom" / "config.toml"
+    cfg_path.parent.mkdir()
+    cfg_path.write_text('[spotify]\nclient_id = "x"\nclient_secret = "y"\n')
+
+    # Change CWD to an empty tmp dir so any accidental default write is detectable
+    cwd = tmp_path / "workdir"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    from sync.config import persist_playlist_id
+
+    persist_playlist_id("pl_new", cfg_path)
+
+    text = cfg_path.read_text()
+    assert 'target_playlist_id = "pl_new"' in text
+    # Must NOT write to the default CWD-relative path
+    assert not (cwd / "config.toml").exists()
+
+
+def test_persist_playlist_id_does_not_touch_other_sections(tmp_path: Path) -> None:
+    # TOML keys are section-local; the regex must only match within [spotify], not [other]
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[other]\ntarget_playlist_id = "old"\n\n[spotify]\nclient_id = "x"\nclient_secret = "y"\n'
+    )
+
+    from sync.config import persist_playlist_id
+
+    persist_playlist_id("pl_new", cfg_path)
+
+    text = cfg_path.read_text()
+    assert 'target_playlist_id = "old"' in text  # [other] section untouched
+    assert "[spotify]" in text
+    # The new id must appear under [spotify]
+    spotify_part = text[text.index("[spotify]") :]
+    assert 'target_playlist_id = "pl_new"' in spotify_part
+
+
 def test_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "cid")
     monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "csec")

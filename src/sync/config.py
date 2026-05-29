@@ -33,6 +33,9 @@ class Config:
     spotify: SpotifyConfig
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    # Stores the resolved path of the config file so callers (e.g. persist_playlist_id)
+    # can write back to the same file even when --config points to a non-CWD location.
+    config_path: Path | None = None
 
     @property
     def log_file(self) -> Path:
@@ -55,20 +58,31 @@ def persist_playlist_id(playlist_id: str, config_path: Path | None = None) -> No
 
     text = path.read_text()
 
-    if re.search(r"^target_playlist_id\s*=", text, re.MULTILINE):
-        text = re.sub(
+    # TOML keys are section-local; scope all lookups to the [spotify] block (everything from
+    # [spotify] up to the next section header or EOF) to avoid touching identically-named keys
+    # in other sections.
+    spotify_block = re.search(r"(\[spotify\][^\[]*)", text, re.DOTALL)
+
+    if spotify_block and re.search(
+        r"^target_playlist_id\s*=", spotify_block.group(1), re.MULTILINE
+    ):
+        start, end = spotify_block.span(1)
+        new_block = re.sub(
             r"^(target_playlist_id\s*=\s*).*$",
             f'target_playlist_id = "{playlist_id}"',
-            text,
+            spotify_block.group(1),
             flags=re.MULTILINE,
         )
-    elif "[spotify]" in text:
-        text = re.sub(
-            r"(\[spotify\])",
-            f'\\1\ntarget_playlist_id = "{playlist_id}"',
-            text,
+        text = text[:start] + new_block + text[end:]
+    elif spotify_block:
+        start, end = spotify_block.span(1)
+        new_block = re.sub(
+            r"(\[spotify\]\n?)",
+            f'\\1target_playlist_id = "{playlist_id}"\n',
+            spotify_block.group(1),
             count=1,
         )
+        text = text[:start] + new_block + text[end:]
     else:
         text += f'\n[spotify]\ntarget_playlist_id = "{playlist_id}"\n'
 
@@ -122,4 +136,9 @@ def load_config(config_path: Path | None = None) -> Config:
         file=str(log_raw.get("file", "~/.local/share/spotify-sync/sync.log")),
     )
 
-    return Config(spotify=spotify, notifications=notifications, logging=logging_cfg)
+    return Config(
+        spotify=spotify,
+        notifications=notifications,
+        logging=logging_cfg,
+        config_path=path if path.exists() else None,
+    )

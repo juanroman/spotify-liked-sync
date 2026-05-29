@@ -32,7 +32,7 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
             playlist_id = config.spotify.target_playlist_id
         else:
             playlist_id = client.find_or_create_playlist(config.spotify.target_playlist_name)
-            persist_playlist_id(playlist_id)
+            persist_playlist_id(playlist_id, config.config_path)
             log.info("Persisted target_playlist_id=%s to config.toml", playlist_id)
 
         liked_uris = client.get_liked_songs()
@@ -62,9 +62,10 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         log.warning(
             "Rate limited by Spotify (retry after %ds). Skipping this run.", exc.retry_after
         )
-        failures = state.get("consecutive_failures", 0) + 1
-        _save_state(state_path, consecutive_failures=failures)
-        _check_consecutive_failures(failures, config)
+        # Preserve the existing failure count rather than incrementing it: rate-limiting is
+        # infrastructure noise, not a script failure, and incrementing would fire the
+        # consecutive-failures warning when the root cause is transient throttling, not a bug.
+        _save_state(state_path, consecutive_failures=state.get("consecutive_failures", 0))
 
     except SpotifyAPIError as exc:
         if exc.status_code in (400, 403, 404):
