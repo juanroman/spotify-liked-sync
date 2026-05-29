@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 
@@ -92,9 +93,7 @@ class SpotifyClient:
             next_url: str | None = data.get("next")
             if not next_url:
                 break
-            parsed = next_url.removeprefix(SPOTIFY_API_BASE)
-            url = parsed.split("?")[0]
-            params = dict(p.split("=") for p in parsed.split("?")[1].split("&"))  # type: ignore[assignment]
+            url, params = self._parse_next_url(next_url)  # type: ignore[assignment]
 
         log.info("Fetched %d liked songs", len(uris))
         return uris
@@ -115,9 +114,7 @@ class SpotifyClient:
             next_url: str | None = data.get("next")
             if not next_url:
                 break
-            parsed = next_url.removeprefix(SPOTIFY_API_BASE)
-            url = parsed.split("?")[0]
-            params = dict(p.split("=") for p in parsed.split("?")[1].split("&"))  # type: ignore[assignment]
+            url, params = self._parse_next_url(next_url)  # type: ignore[assignment]
 
         return uris
 
@@ -138,9 +135,7 @@ class SpotifyClient:
             next_url: str | None = data.get("next")
             if not next_url:
                 break
-            parsed = next_url.removeprefix(SPOTIFY_API_BASE)
-            url = parsed.split("?")[0]
-            params = dict(p.split("=") for p in parsed.split("?")[1].split("&"))  # type: ignore[assignment]
+            url, params = self._parse_next_url(next_url)  # type: ignore[assignment]
 
         description = "Auto-synced from Spotify Liked Songs"
         resp = self._request(
@@ -166,6 +161,10 @@ class SpotifyClient:
             try:
                 self._write_playlist(playlist_id, snapshot)
                 log.warning("Playlist restored to pre-write state after failed write")
+                # Delete WAL here, not only on the happy path: the restore succeeded so the
+                # playlist is healthy, and leaving the WAL causes false "mid-write crash"
+                # warnings on every subsequent run.
+                wal_path.unlink(missing_ok=True)
             except Exception as restore_exc:
                 log.critical(
                     "Write failed AND restore failed. WAL preserved at %s for manual recovery. "
@@ -178,6 +177,13 @@ class SpotifyClient:
 
         wal_path.unlink(missing_ok=True)
         log.debug("WAL removed after successful write")
+
+    def _parse_next_url(self, next_url: str) -> tuple[str, dict[str, str]]:
+        # split('=') with no maxsplit breaks on values that contain '=' (e.g. base64 cursors);
+        # urllib.parse.parse_qs handles percent-encoding and multi-'=' values correctly.
+        parsed = urllib.parse.urlparse(next_url.removeprefix(SPOTIFY_API_BASE))
+        params = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
+        return parsed.path, params
 
     def _write_playlist(self, playlist_id: str, uris: list[str]) -> None:
         if not uris:
