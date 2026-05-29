@@ -1,5 +1,8 @@
 # spotify-liked-sync
 
+[![CI](https://github.com/juanroman/spotify-liked-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/juanroman/spotify-liked-sync/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A Python CLI that mirrors your Spotify Liked Songs into a regular playlist — newest first, removes included. Because Liked Songs can't be synced to Apple Music or other services directly, this creates a proper playlist you can hand off to tools like SongShift.
 
 ## Features
@@ -74,6 +77,8 @@ errors    = true
 warnings  = true
 adds      = true
 consecutive_failures_threshold = 3
+pushover_token = ""             # or PUSHOVER_TOKEN env var
+pushover_user  = ""             # or PUSHOVER_USER env var
 
 [logging]
 level = "INFO"
