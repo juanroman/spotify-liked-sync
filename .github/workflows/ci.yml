@@ -40,4 +40,6 @@ jobs:
           SPOTIFY_CLIENT_SECRET: dummy
 
       - name: Security audit (pip-audit)
-        run: uv run pip-audit
+        run: |
+          uv pip install --upgrade pip
+          uv run pip-audit
