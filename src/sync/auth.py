@@ -14,6 +14,16 @@ import httpx
 
 from sync.config import Config
 
+TOKEN_EXPIRY_DAYS = 180  # Spotify's 6-month refresh token lifetime
+
+
+class RefreshTokenExpiredError(Exception):
+    """Spotify rejected the refresh token with invalid_grant.
+
+    User must re-run `python -m sync auth` on a machine with a browser.
+    """
+
+
 SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
@@ -105,11 +115,13 @@ def run_auth_flow(config: Config) -> None:
     resp.raise_for_status()
     token_data = resp.json()
 
-    expires_at = datetime.now(tz=UTC) + timedelta(seconds=token_data["expires_in"])
+    now = datetime.now(tz=UTC)
+    expires_at = now + timedelta(seconds=token_data["expires_in"])
     tokens = {
         "access_token": token_data["access_token"],
         "refresh_token": token_data["refresh_token"],
         "expires_at": expires_at.isoformat(),
+        "authorized_at": now.isoformat(),
     }
 
     tokens_path = _tokens_path(config)
@@ -150,6 +162,13 @@ def _refresh_tokens(
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
+    if resp.status_code == 400:
+        body = resp.json()
+        if body.get("error") == "invalid_grant":
+            raise RefreshTokenExpiredError(
+                "Spotify refresh token has expired. "
+                "Run `python -m sync auth` on your Mac to re-authenticate."
+            )
     resp.raise_for_status()
     data = resp.json()
     expires_at = datetime.now(tz=UTC) + timedelta(seconds=data["expires_in"])
@@ -159,6 +178,21 @@ def _refresh_tokens(
         "refresh_token": data.get("refresh_token", refresh_token),
         "expires_at": expires_at.isoformat(),
     }
+
+
+def days_until_token_expiry(config: Config) -> int | None:
+    """Returns days remaining before the refresh token expires, or None if unknown."""
+    tokens_path = _tokens_path(config)
+    if not tokens_path.exists():
+        return None
+    tokens = json.loads(tokens_path.read_text())
+    authorized_at_str = tokens.get("authorized_at")
+    if not authorized_at_str:
+        return None
+    authorized_at = datetime.fromisoformat(authorized_at_str)
+    expiry = authorized_at + timedelta(days=TOKEN_EXPIRY_DAYS)
+    remaining = (expiry - datetime.now(tz=UTC)).days
+    return max(remaining, 0)
 
 
 def _tokens_path(config: Config) -> Path:

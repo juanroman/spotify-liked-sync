@@ -11,7 +11,7 @@
 Asignar IP fija al Pi via DHCP reservation en el router antes de conectar.
 
 ```bash
-ssh pi@<ip>
+ssh YOUR_USERNAME@<ip>
 ```
 
 Instalar dependencias y clonar el repo:
@@ -19,6 +19,7 @@ Instalar dependencias y clonar el repo:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source ~/.bashrc
+cd ~
 git clone https://github.com/juanroman/spotify-liked-sync.git
 cd spotify-liked-sync && uv sync
 ```
@@ -30,12 +31,12 @@ cd spotify-liked-sync && uv sync
 uv run python -m sync auth
 
 # Copiar tokens a la Pi:
-scp ~/.local/share/spotify-sync/tokens.json pi@<ip>:/home/pi/.local/share/spotify-sync/
+scp ~/.local/share/spotify-sync/tokens.json YOUR_USERNAME@<ip>:/home/YOUR_USERNAME/.local/share/spotify-sync/
 ```
 
 ## 4. Configurar config.toml en la Pi
 
-Crear `/home/pi/spotify-liked-sync/config.toml`:
+Crear `/home/YOUR_USERNAME/spotify-liked-sync/config.toml`:
 
 ```toml
 [spotify]
@@ -59,9 +60,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=pi
-WorkingDirectory=/home/pi/spotify-liked-sync
-ExecStart=/home/pi/.local/bin/uv run python -m sync run
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/spotify-liked-sync
+ExecStart=/home/YOUR_USERNAME/.local/bin/uv run python -m sync run
 StandardOutput=journal
 StandardError=journal
 ```
@@ -96,8 +97,37 @@ uv run python -m sync run
 journalctl -u spotify-sync.service -f
 ```
 
+## Re-autenticación (token expirado)
+
+Desde julio 2026, Spotify expira los refresh tokens a los ~6 meses. Cuando esto ocurra, el sync fallará con un error `invalid_grant` y recibirás un push a tu iPhone con el título **"Spotify Sync — Re-auth Required"**. El log de systemd también mostrará el mensaje de error con instrucciones.
+
+### Pasos para re-autenticar
+
+1. **En la Mac** (requiere browser):
+
+   ```bash
+   uv run python -m sync auth
+   ```
+
+2. **Copiar los tokens a la Pi**:
+
+   ```bash
+   scp ~/.local/share/spotify-sync/tokens.json YOUR_USERNAME@<PI_IP>:/home/YOUR_USERNAME/.local/share/spotify-sync/
+   ```
+
+3. **Verificar que el timer sigue activo**:
+
+   ```bash
+   ssh YOUR_USERNAME@<PI_IP> "systemctl --user status spotify-sync.timer"
+   # Si está parado: systemctl --user start spotify-sync.timer
+   ```
+
+El sync debería recuperarse automáticamente en el siguiente ciclo (15 minutos).
+
+> **Aviso proactivo:** Si se configura `authorized_at` en `tokens.json` (automático desde la versión que incluye esta sección), el sync loguea un WARNING y envía un push cuando quedan ≤14 días para la expiración — así puedes re-autenticar antes de que el Pi se quede sin acceso.
+
 ## Actualizaciones futuras
 
 ```bash
-ssh pi@<ip> "cd spotify-liked-sync && git pull && uv sync"
+ssh YOUR_USERNAME@<ip> "cd spotify-liked-sync && git pull && uv sync"
 ```
