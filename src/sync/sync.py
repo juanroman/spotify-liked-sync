@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sync.auth import RefreshTokenExpiredError, days_until_token_expiry
 from sync.client import RateLimitError, SpotifyAPIError, SpotifyClient
 from sync.config import Config, persist_playlist_id
 from sync.notify import push
@@ -27,6 +28,16 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         )
 
     state = _load_state(state_path)
+
+    days_left = days_until_token_expiry(config)
+    if days_left is not None and days_left <= 14:
+        msg = (
+            f"Spotify refresh token expires in {days_left} day(s). "
+            "Run `python -m sync auth` on your Mac soon."
+        )
+        log.warning(msg)
+        if config.notifications.warnings:
+            push(config.notifications, msg, title="Spotify Sync — Action Required")
 
     try:
         if config.spotify.target_playlist_id:
@@ -72,6 +83,23 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         # infrastructure noise, not a script failure, and incrementing would fire the
         # consecutive-failures warning when the root cause is transient throttling, not a bug.
         _save_state(state_path, consecutive_failures=state.get("consecutive_failures", 0))
+
+    except RefreshTokenExpiredError:
+        log.error(
+            "Spotify refresh token has expired (invalid_grant). "
+            "ACTION REQUIRED: Run `python -m sync auth` on your Mac, "
+            "then copy ~/.local/share/spotify-sync/tokens.json to the Pi. "
+            "See docs/DEPLOY.md for the scp command."
+        )
+        if config.notifications.errors:
+            push(
+                config.notifications,
+                "Refresh token expired. Run `sync auth` on your Mac and copy tokens to Pi.",
+                title="Spotify Sync — Re-auth Required",
+            )
+        # Do not increment consecutive_failures: this is a one-time auth event.
+        _save_state(state_path, consecutive_failures=state.get("consecutive_failures", 0))
+        raise
 
     except SpotifyAPIError as exc:
         if exc.status_code in (400, 403, 404):

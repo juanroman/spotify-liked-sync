@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from sync.auth import RefreshTokenExpiredError
 from sync.client import RateLimitError, SpotifyAPIError, SpotifyClient
 from sync.config import Config
 from sync.sync import run_sync
@@ -265,3 +266,133 @@ def test_push_not_called_on_rate_limit(config: Config) -> None:
         run_sync(config, client)
 
     mock_push.assert_not_called()
+
+
+# --- RefreshTokenExpiredError tests ---
+
+
+def test_refresh_token_expired_sends_push_immediately(config: Config) -> None:
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = RefreshTokenExpiredError("expired")
+
+    with patch("sync.sync.push") as mock_push, contextlib.suppress(RefreshTokenExpiredError):
+        run_sync(config, client)
+
+    mock_push.assert_called_once()
+    call_kwargs = mock_push.call_args[1]
+    call_args = mock_push.call_args[0]
+    title = call_kwargs.get("title") or (call_args[2] if len(call_args) > 2 else "")
+    assert "Re-auth" in title
+
+
+def test_refresh_token_expired_does_not_increment_counter(config: Config) -> None:
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = RefreshTokenExpiredError("expired")
+
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"consecutive_failures": 2}))
+
+    with contextlib.suppress(RefreshTokenExpiredError):
+        run_sync(config, client)
+
+    state = json.loads(state_path.read_text())
+    assert state["consecutive_failures"] == 2
+
+
+def test_refresh_token_expired_reraises(config: Config) -> None:
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = RefreshTokenExpiredError("expired")
+
+    with pytest.raises(RefreshTokenExpiredError):
+        run_sync(config, client)
+
+
+def test_refresh_token_expired_no_push_when_notifications_disabled(config: Config) -> None:
+    config.notifications.errors = False
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = RefreshTokenExpiredError("expired")
+
+    with patch("sync.sync.push") as mock_push, contextlib.suppress(RefreshTokenExpiredError):
+        run_sync(config, client)
+
+    mock_push.assert_not_called()
+
+
+# --- Proactive warning tests ---
+
+
+def test_proactive_warning_fires_at_14_days(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    client = _make_mock_client([], [])
+
+    import logging
+
+    with (
+        patch("sync.sync.days_until_token_expiry", return_value=14),
+        patch("sync.sync.push") as mock_push,
+        caplog.at_level(logging.WARNING),
+    ):
+        run_sync(config, client)
+
+    assert any("14 day" in r.message for r in caplog.records)
+    mock_push.assert_called_once()
+    msg = mock_push.call_args[0][1]
+    assert "14 day" in msg
+
+
+def test_proactive_warning_fires_at_0_days(config: Config) -> None:
+    client = _make_mock_client([], [])
+
+    with (
+        patch("sync.sync.days_until_token_expiry", return_value=0),
+        patch("sync.sync.push") as mock_push,
+    ):
+        run_sync(config, client)
+
+    mock_push.assert_called_once()
+    msg = mock_push.call_args[0][1]
+    assert "0 day" in msg
+
+
+def test_proactive_warning_skipped_at_15_days(config: Config) -> None:
+    client = _make_mock_client([], [])
+
+    with (
+        patch("sync.sync.days_until_token_expiry", return_value=15),
+        patch("sync.sync.push") as mock_push,
+    ):
+        run_sync(config, client)
+
+    mock_push.assert_not_called()
+
+
+def test_proactive_warning_skipped_when_authorized_at_absent(config: Config) -> None:
+    client = _make_mock_client([], [])
+
+    with (
+        patch("sync.sync.days_until_token_expiry", return_value=None),
+        patch("sync.sync.push") as mock_push,
+    ):
+        run_sync(config, client)
+
+    mock_push.assert_not_called()
+
+
+def test_proactive_warning_logs_even_without_pushover(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    config.notifications.pushover_token = ""
+    config.notifications.pushover_user = ""
+    client = _make_mock_client([], [])
+
+    import logging
+
+    with (
+        patch("sync.sync.days_until_token_expiry", return_value=7),
+        caplog.at_level(logging.WARNING),
+    ):
+        run_sync(config, client)
+
+    assert any("7 day" in r.message for r in caplog.records)

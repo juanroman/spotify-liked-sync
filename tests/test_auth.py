@@ -10,12 +10,15 @@ from conftest import write_tokens
 from pytest_httpx import HTTPXMock
 
 from sync.auth import (
+    TOKEN_EXPIRY_DAYS,
+    RefreshTokenExpiredError,
     _build_auth_url,
     _CallbackHandler,
     _pkce_pair,
     _refresh_tokens,
     _tokens_path,
     _wait_for_callback,
+    days_until_token_expiry,
     get_valid_token,
     run_auth_flow,
 )
@@ -197,3 +200,107 @@ def test_run_auth_flow_saves_tokens(
     assert saved["access_token"] == "flow_access"
     assert saved["refresh_token"] == "flow_refresh"
     assert "expires_at" in saved
+
+
+def test_run_auth_flow_saves_authorized_at(
+    config: Config, tokens_file: Path, httpx_mock: HTTPXMock
+) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://accounts.spotify.com/api/token",
+        json={"access_token": "flow_access", "refresh_token": "flow_refresh", "expires_in": 3600},
+    )
+
+    with (
+        patch("sync.auth._pkce_pair", return_value=("verifier", "challenge")),
+        patch("sync.auth.secrets.token_urlsafe", return_value="good_state"),
+        patch("sync.auth.webbrowser.get"),
+        patch("sync.auth._wait_for_callback", return_value=("auth_code", "good_state")),
+    ):
+        run_auth_flow(config)
+
+    saved = json.loads(tokens_file.read_text())
+    assert "authorized_at" in saved
+    from datetime import UTC, datetime
+
+    # Must parse without error and be a recent timestamp
+    authorized_at = datetime.fromisoformat(saved["authorized_at"])
+    assert (datetime.now(tz=UTC) - authorized_at).total_seconds() < 10
+
+
+def test_refresh_tokens_raises_on_invalid_grant(config: Config, httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://accounts.spotify.com/api/token",
+        status_code=400,
+        json={"error": "invalid_grant", "error_description": "Refresh token revoked"},
+    )
+    with pytest.raises(RefreshTokenExpiredError):
+        _refresh_tokens(config, "old_refresh", httpx.Client())
+
+
+def test_refresh_tokens_reraises_other_400(config: Config, httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="https://accounts.spotify.com/api/token",
+        status_code=400,
+        json={"error": "invalid_client", "error_description": "Bad credentials"},
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        _refresh_tokens(config, "old_refresh", httpx.Client())
+
+
+def test_days_until_token_expiry_returns_none_when_no_file(config: Config) -> None:
+    assert days_until_token_expiry(config) is None
+
+
+def test_days_until_token_expiry_returns_none_when_no_authorized_at(
+    config: Config, tokens_file: Path
+) -> None:
+    tokens_file.write_text(
+        json.dumps(
+            {"access_token": "x", "refresh_token": "y", "expires_at": "2099-01-01T00:00:00+00:00"}
+        )
+    )
+    assert days_until_token_expiry(config) is None
+
+
+def _write_tokens_with_authorized_at(tokens_file: Path, authorized_at: str) -> None:
+    tokens_file.write_text(
+        json.dumps(
+            {
+                "access_token": "x",
+                "refresh_token": "y",
+                "expires_at": "2099-01-01T00:00:00+00:00",
+                "authorized_at": authorized_at,
+            }
+        )
+    )
+
+
+def test_days_until_token_expiry_fresh(config: Config, tokens_file: Path) -> None:
+    from datetime import UTC, datetime
+
+    authorized_at = datetime.now(tz=UTC)
+    _write_tokens_with_authorized_at(tokens_file, authorized_at.isoformat())
+    days = days_until_token_expiry(config)
+    assert days is not None
+    assert TOKEN_EXPIRY_DAYS - 1 <= days <= TOKEN_EXPIRY_DAYS
+
+
+def test_days_until_token_expiry_near_expiry(config: Config, tokens_file: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    authorized_at = datetime.now(tz=UTC) - timedelta(days=167)
+    _write_tokens_with_authorized_at(tokens_file, authorized_at.isoformat())
+    days = days_until_token_expiry(config)
+    assert days is not None
+    assert 12 <= days <= 13
+
+
+def test_days_until_token_expiry_expired(config: Config, tokens_file: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    authorized_at = datetime.now(tz=UTC) - timedelta(days=181)
+    _write_tokens_with_authorized_at(tokens_file, authorized_at.isoformat())
+    assert days_until_token_expiry(config) == 0
