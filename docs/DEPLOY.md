@@ -71,11 +71,11 @@ Crear `/etc/systemd/system/spotify-sync.timer`:
 
 ```ini
 [Unit]
-Description=Run Spotify Sync every 15 minutes
+Description=Run Spotify Sync every 30 minutes
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=15min
+OnUnitActiveSec=30min
 
 [Install]
 WantedBy=timers.target
@@ -122,9 +122,24 @@ Desde julio 2026, Spotify expira los refresh tokens a los ~6 meses. Cuando esto 
    # Si está parado: systemctl --user start spotify-sync.timer
    ```
 
-El sync debería recuperarse automáticamente en el siguiente ciclo (15 minutos).
+El sync debería recuperarse automáticamente en el siguiente ciclo (30 minutos).
 
 > **Aviso proactivo:** Si se configura `authorized_at` en `tokens.json` (automático desde la versión que incluye esta sección), el sync loguea un WARNING y envía un push cuando quedan ≤14 días para la expiración — así puedes re-autenticar antes de que el Pi se quede sin acceso.
+
+## Cambiar el intervalo del timer
+
+Si necesitas ajustar con qué frecuencia corre el sync (por ejemplo de 30 a 60 minutos), edita el archivo del timer en la Pi y recarga systemd:
+
+```bash
+sudo nano /etc/systemd/system/spotify-sync.timer
+# Editar OnUnitActiveSec=60min (o el valor deseado)
+
+sudo systemctl daemon-reload
+sudo systemctl restart spotify-sync.timer
+
+# Verificar que el nuevo intervalo está activo:
+systemctl status spotify-sync.timer
+```
 
 ## Actualizaciones futuras
 
