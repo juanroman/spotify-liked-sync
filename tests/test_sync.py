@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -64,7 +66,6 @@ def test_wal_warning_on_startup(config: Config, caplog: pytest.LogCaptureFixture
     wal_path.write_text(json.dumps({"playlist_id": "pl1", "intended": [], "snapshot": []}))
 
     client = _make_mock_client([], [])
-    import logging
 
     with caplog.at_level(logging.WARNING):
         run_sync(config, client)
@@ -99,8 +100,6 @@ def test_consecutive_failures_warning_on_api_error(
     config.state_dir.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"consecutive_failures": 2}))
 
-    import logging
-
     with caplog.at_level(logging.WARNING), contextlib.suppress(SpotifyAPIError):
         run_sync(config, client)
 
@@ -116,8 +115,6 @@ def test_rate_limit_does_not_fire_consecutive_failures_warning(
     state_path = config.state_dir / "state.json"
     config.state_dir.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"consecutive_failures": 2}))
-
-    import logging
 
     with caplog.at_level(logging.WARNING):
         run_sync(config, client)
@@ -327,8 +324,6 @@ def test_proactive_warning_fires_at_14_days(
 ) -> None:
     client = _make_mock_client([], [])
 
-    import logging
-
     with (
         patch("sync.sync.days_until_token_expiry", return_value=14),
         patch("sync.sync.push") as mock_push,
@@ -387,8 +382,6 @@ def test_proactive_warning_logs_even_without_pushover(
     config.notifications.pushover_user = ""
     client = _make_mock_client([], [])
 
-    import logging
-
     with (
         patch("sync.sync.days_until_token_expiry", return_value=7),
         caplog.at_level(logging.WARNING),
@@ -396,3 +389,77 @@ def test_proactive_warning_logs_even_without_pushover(
         run_sync(config, client)
 
     assert any("7 day" in r.message for r in caplog.records)
+
+
+# --- Rate-limit backoff persistence tests ---
+
+
+def test_rate_limit_persists_rate_limited_until(config: Config) -> None:
+    client = _make_mock_client([], [])
+    client.get_liked_songs.side_effect = RateLimitError(600)
+
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+
+    before = datetime.now(tz=UTC)
+    run_sync(config, client)
+
+    state = json.loads(state_path.read_text())
+    assert state.get("rate_limited_until") is not None
+    stored = datetime.fromisoformat(state["rate_limited_until"])
+    assert stored >= before + timedelta(seconds=595)
+    assert stored <= before + timedelta(seconds=605)
+
+
+def test_rate_limit_skips_run_when_within_backoff(config: Config) -> None:
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    future = (datetime.now(tz=UTC) + timedelta(seconds=60)).isoformat()
+    state_path.write_text(json.dumps({"consecutive_failures": 0, "rate_limited_until": future}))
+
+    client = _make_mock_client([], [])
+    run_sync(config, client)
+
+    client.get_liked_songs.assert_not_called()
+
+
+def test_rate_limit_does_not_skip_after_backoff_expires(config: Config) -> None:
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    past = (datetime.now(tz=UTC) - timedelta(seconds=60)).isoformat()
+    state_path.write_text(json.dumps({"consecutive_failures": 0, "rate_limited_until": past}))
+
+    uris = ["spotify:track:A"]
+    client = _make_mock_client(uris, uris)
+    run_sync(config, client)
+
+    client.get_liked_songs.assert_called_once()
+
+
+def test_success_clears_rate_limited_until(config: Config) -> None:
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    past = (datetime.now(tz=UTC) - timedelta(seconds=60)).isoformat()
+    state_path.write_text(json.dumps({"consecutive_failures": 0, "rate_limited_until": past}))
+
+    uris = ["spotify:track:A"]
+    client = _make_mock_client(uris, uris)
+    run_sync(config, client)
+
+    state = json.loads(state_path.read_text())
+    assert state.get("rate_limited_until") is None
+
+
+def test_rate_limit_logs_backoff_skip(config: Config, caplog: pytest.LogCaptureFixture) -> None:
+    state_path = config.state_dir / "state.json"
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    future = (datetime.now(tz=UTC) + timedelta(seconds=60)).isoformat()
+    state_path.write_text(json.dumps({"consecutive_failures": 0, "rate_limited_until": future}))
+
+    client = _make_mock_client([], [])
+    with caplog.at_level(logging.INFO):
+        run_sync(config, client)
+
+    assert any(
+        "rate-limit" in r.message.lower() or "backoff" in r.message.lower() for r in caplog.records
+    )

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TypedDict
 
 from sync.auth import RefreshTokenExpiredError, days_until_token_expiry
 from sync.client import RateLimitError, SpotifyAPIError, SpotifyClient
@@ -11,6 +12,12 @@ from sync.config import Config, persist_playlist_id
 from sync.notify import push
 
 log = logging.getLogger(__name__)
+
+
+class _State(TypedDict, total=False):
+    consecutive_failures: int
+    last_run: str
+    rate_limited_until: str | None
 
 
 def run_sync(config: Config, client: SpotifyClient) -> None:
@@ -28,6 +35,16 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         )
 
     state = _load_state(state_path)
+
+    raw_until = state.get("rate_limited_until")
+    if raw_until:
+        rate_limited_until = datetime.fromisoformat(raw_until)
+        if datetime.now(tz=UTC) < rate_limited_until:
+            log.info(
+                "Still within Spotify rate-limit backoff window (until %s). Skipping this run.",
+                rate_limited_until.isoformat(),
+            )
+            return
 
     days_left = days_until_token_expiry(config)
     if days_left is not None and days_left <= 14:
@@ -53,7 +70,7 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         # List equality, not set: Liked Songs order (most-recent-first) is meaningful and preserved.
         if liked_uris == current_uris:
             log.info("Playlist already in sync (%d tracks). Nothing to do.", len(liked_uris))
-            _save_state(state_path, consecutive_failures=0)
+            _save_state(state_path, consecutive_failures=0, rate_limited_until=None)
             return
 
         liked_set = set(liked_uris)
@@ -73,16 +90,23 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         else:
             log.info("Sync complete: %d tracks in playlist", len(liked_uris))
 
-        _save_state(state_path, consecutive_failures=0)
+        _save_state(state_path, consecutive_failures=0, rate_limited_until=None)
 
     except RateLimitError as exc:
+        until = datetime.now(tz=UTC) + timedelta(seconds=exc.retry_after)
         log.warning(
-            "Rate limited by Spotify (retry after %ds). Skipping this run.", exc.retry_after
+            "Rate limited by Spotify (retry after %ds, until %s). Skipping this run.",
+            exc.retry_after,
+            until.isoformat(),
         )
         # Preserve the existing failure count rather than incrementing it: rate-limiting is
         # infrastructure noise, not a script failure, and incrementing would fire the
         # consecutive-failures warning when the root cause is transient throttling, not a bug.
-        _save_state(state_path, consecutive_failures=state.get("consecutive_failures", 0))
+        _save_state(
+            state_path,
+            consecutive_failures=state.get("consecutive_failures", 0),
+            rate_limited_until=until,
+        )
 
     except RefreshTokenExpiredError:
         log.error(
@@ -98,7 +122,11 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
                 title="Spotify Sync — Re-auth Required",
             )
         # Do not increment consecutive_failures: this is a one-time auth event.
-        _save_state(state_path, consecutive_failures=state.get("consecutive_failures", 0))
+        _save_state(
+            state_path,
+            consecutive_failures=state.get("consecutive_failures", 0),
+            rate_limited_until=None,
+        )
         raise
 
     except SpotifyAPIError as exc:
@@ -116,14 +144,14 @@ def run_sync(config: Config, client: SpotifyClient) -> None:
         else:
             log.error("Spotify API error: %s", exc)
         failures = state.get("consecutive_failures", 0) + 1
-        _save_state(state_path, consecutive_failures=failures)
+        _save_state(state_path, consecutive_failures=failures, rate_limited_until=None)
         _check_consecutive_failures(failures, config)
         raise
 
     except Exception as exc:
         log.error("Sync failed: %s", exc)
         failures = state.get("consecutive_failures", 0) + 1
-        _save_state(state_path, consecutive_failures=failures)
+        _save_state(state_path, consecutive_failures=failures, rate_limited_until=None)
         _check_consecutive_failures(failures, config)
         raise
 
@@ -142,16 +170,21 @@ def _check_consecutive_failures(failures: int, config: Config) -> None:
         )
 
 
-def _load_state(state_path: Path) -> dict[str, int]:
+def _load_state(state_path: Path) -> _State:
     if state_path.exists():
-        data: dict[str, int] = json.loads(state_path.read_text())
+        data: _State = json.loads(state_path.read_text())
         return data
-    return {}
+    return _State()
 
 
-def _save_state(state_path: Path, consecutive_failures: int) -> None:
-    state: dict[str, int | str] = {
+def _save_state(
+    state_path: Path,
+    consecutive_failures: int,
+    rate_limited_until: datetime | None = None,
+) -> None:
+    state: dict[str, int | str | None] = {
         "consecutive_failures": consecutive_failures,
         "last_run": datetime.now(tz=UTC).isoformat(),
+        "rate_limited_until": rate_limited_until.isoformat() if rate_limited_until else None,
     }
     state_path.write_text(json.dumps(state, indent=2))
