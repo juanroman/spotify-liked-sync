@@ -461,6 +461,5 @@ def test_rate_limit_logs_backoff_skip(config: Config, caplog: pytest.LogCaptureF
         run_sync(config, client)
 
     assert any(
-        "rate-limit" in r.message.lower() or "backoff" in r.message.lower()
-        for r in caplog.records
+        "rate-limit" in r.message.lower() or "backoff" in r.message.lower() for r in caplog.records
     )
