@@ -9,6 +9,9 @@ on:
     # Weekly canary run to detect Spotify API drift
     - cron: "0 9 * * 1"
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
